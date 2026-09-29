@@ -8,9 +8,17 @@ from copy import copy
 from functools import partial
 from html import unescape
 
+import mistune
 from jinja2 import Environment
+from mistune import BlockParser
 
 from nbconvert.filters.markdown import markdown2html
+from nbconvert.filters.markdown_mistune import (
+    MISTUNE_V3,
+    MISTUNE_V3_ATX,
+    MarkdownWithMath,
+    import_plugin,
+)
 from nbconvert.filters.pandoc import convert_pandoc
 from tests.base import TestsBase
 from tests.testutils import onlyif_cmds_exist
@@ -252,6 +260,49 @@ i.e. the $i^{th}$""",
         )
 
         self._try_markdown(markdown2html, case, output_check)
+
+    def test_markdown2html_mistune_plugins(self):
+        """Features provided by mistune's plugin interface must render.
+
+        nbconvert enables mistune plugins (strikethrough, table, url,
+        task_lists, def_list) through ``import_plugin``. This guards
+        against plugin-interface changes in new mistune releases
+        (e.g. the 3.1 series).
+        """
+        cases = [
+            ("~~strike~~", "<del>strike</del>"),
+            (
+                "visit https://example.com now",
+                '<a href="https://example.com">https://example.com</a>',
+            ),
+            ("- [x] done\n- [ ] todo", 'class="task-list-item"'),
+            ("| a | b |\n|---|---|\n| 1 | 2 |", "<table>"),
+            ("Term\n: definition", "<dl>"),
+        ]
+        for md, token in cases:
+            self._try_markdown(markdown2html, md, token)
+
+    def test_mistune_default_plugins_available(self):
+        """Every default mistune plugin must resolve via the import shim.
+
+        ``markdown_mistune.import_plugin`` abstracts over the mistune 2
+        (``PLUGINS`` registry) and mistune 3 (``mistune.import_plugin``)
+        plugin interfaces.
+        """
+        for name in MarkdownWithMath.DEFAULT_PLUGINS:
+            plugin = import_plugin(name)
+            self.assertTrue(callable(plugin), f"mistune plugin {name!r} is not callable")
+
+    def test_mistune_version_detection(self):
+        """The mistune compatibility flags must match the installed mistune."""
+        major = int(mistune.__version__.split(".")[0])
+        self.assertEqual(MISTUNE_V3, major >= 3)
+        if MISTUNE_V3:
+            # mistune 3.1 renamed the "axt_heading" rule to "atx_heading";
+            # the math block parser patches whichever name is present.
+            self.assertEqual(MISTUNE_V3_ATX, "atx_heading" in BlockParser.SPECIFICATION)
+        else:
+            self.assertFalse(MISTUNE_V3_ATX)
 
     def _try_markdown(self, method, test, tokens):
         results = method(test)
